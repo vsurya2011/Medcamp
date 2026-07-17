@@ -178,17 +178,12 @@
         }, () => true);
 
         function App() {
-            // Data State
+            // Offline LocalStorage Database State
             const [users, setUsers] = React.useState(() => getInitialState('carenet_users', defaultUsers));
-            const [patients, setPatients] = React.useState([]); // Driven by Firebase now
+            const [patients, setPatients] = React.useState(() => getInitialState('carenet_patients', []));
             const [currentUser, setCurrentUser] = React.useState(() => getInitialState('carenet_currentUser', null));
             const [myPatientId, setMyPatientId] = React.useState(() => getInitialState('carenet_myPatientId', null));
             
-            // Firebase References
-            const [db, setDb] = React.useState(null);
-            const [appId, setAppId] = React.useState(null);
-            const [isDbReady, setIsDbReady] = React.useState(false);
-
             // UI State
             const [view, setView] = React.useState(() => {
                 const user = getInitialState('carenet_currentUser', null);
@@ -212,6 +207,7 @@
 
             // Save local UI state changes
             React.useEffect(() => localStorage.setItem('carenet_users', JSON.stringify(users)), [users]);
+            React.useEffect(() => localStorage.setItem('carenet_patients', JSON.stringify(patients)), [patients]);
             React.useEffect(() => localStorage.setItem('carenet_currentUser', JSON.stringify(currentUser)), [currentUser]);
             React.useEffect(() => localStorage.setItem('carenet_myPatientId', JSON.stringify(myPatientId)), [myPatientId]);
 
@@ -220,60 +216,6 @@
                 if(darkMode) document.documentElement.classList.add('dark');
                 else document.documentElement.classList.remove('dark');
             }, [darkMode]);
-
-            React.useEffect(() => {
-                let unsubscribe = null;
-
-                const initFirebase = async () => {
-                    try {
-                        const { initializeApp } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js");
-                        const { getAuth, signInAnonymously, signInWithCustomToken } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
-                        const { getFirestore, onSnapshot, collection } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
-                        
-                        const aId = typeof __app_id !== 'undefined' ? __app_id : 'carenet-medical-camp';
-                        setAppId(aId);
-
-                        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-                            // Dummy config fallback if running outside environment
-                            projectId: "demo-project"
-                        };
-
-                        const app = initializeApp(firebaseConfig);
-                        const auth = getAuth(app);
-                        const database = getFirestore(app);
-                        setDb(database);
-
-                        // Authentication (Required before queries)
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await signInWithCustomToken(auth, __initial_auth_token);
-                        } else {
-                            await signInAnonymously(auth);
-                        }
-
-                        // Listen to patients collection in realtime
-                        const patientsRef = collection(database, 'artifacts', aId, 'public', 'data', 'patients');
-                        unsubscribe = onSnapshot(patientsRef, (snapshot) => {
-                            const pts = [];
-                            snapshot.forEach(doc => pts.push({ id: doc.id, ...doc.data() }));
-                            // Sort by timestamp to maintain queue order
-                            pts.sort((a, b) => a.timestamp - b.timestamp);
-                            setPatients(pts);
-                        }, (error) => {
-                            console.error("Firebase sync error:", error);
-                        });
-
-                        setIsDbReady(true);
-                    } catch (error) {
-                        console.error("Error initializing Firebase:", error);
-                    }
-                };
-
-                initFirebase();
-
-                return () => {
-                    if (unsubscribe) unsubscribe();
-                };
-            }, []);
 
             React.useEffect(() => {
                 if (!window.googleTranslateElementInit) {
@@ -318,12 +260,9 @@
                 setIsMobileMenuOpen(false);
             }
 
-            const handlePatientRegistration = async (e) => {
+            const handlePatientRegistration = (e) => {
                 e.preventDefault();
-                if (!isDbReady) {
-                    showMsg("System not ready yet, please wait a moment.", "error");
-                    return;
-                }
+                
                 const fd = new FormData(e.target);
                 const newId = 'PAT-' + Math.floor(Math.random() * 1000000);
                 const newPatient = {
@@ -339,18 +278,12 @@
                     billAmount: null
                 };
                 
-                try {
-                    const { doc, setDoc } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
-                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'patients', newId);
-                    await setDoc(docRef, newPatient);
-                    
-                    setMyPatientId(newId);
-                    showMsg("Registration successful! Please show your QR to the volunteer.", 'success');
-                    setView('patient-portal');
-                } catch (error) {
-                    showMsg("Error saving registration.", 'error');
-                    console.error(error);
-                }
+                // Directly update Local State Database
+                setPatients(prev => [...prev, newPatient]);
+                setMyPatientId(newId);
+                
+                showMsg("Registration successful! Please show your QR to the volunteer.", 'success');
+                setView('patient-portal');
             };
 
             const handleAddUser = (e) => {
@@ -373,7 +306,7 @@
                 showMsg("User removed from system.", 'info');
             };
 
-            const handleVolunteerScan = async (qrData) => {
+            const handleVolunteerScan = (qrData) => {
                 setScanningFor(null);
                 if (qrData.startsWith("PATIENT|")) {
                     const parts = qrData.split("|");
@@ -382,25 +315,19 @@
                     
                     // If patient scanned from external device and not in our DB yet
                     if (!patient) {
-                        try {
-                            patient = {
-                                id: parts[1],
-                                name: parts[2],
-                                age: parts[3],
-                                gender: parts[4],
-                                symptoms: parts.slice(5).join("|"), 
-                                status: "Awaiting Volunteer",
-                                timestamp: Date.now(),
-                                assignedDoctor: null,
-                                prescription: null,
-                                billAmount: null
-                            };
-                            const { doc, setDoc } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
-                            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'patients', patient.id);
-                            await setDoc(docRef, patient);
-                        } catch (e) {
-                            showMsg("Error syncing external patient.", "error");
-                        }
+                        patient = {
+                            id: parts[1],
+                            name: parts[2],
+                            age: parts[3],
+                            gender: parts[4],
+                            symptoms: parts.slice(5).join("|"), 
+                            status: "Awaiting Volunteer",
+                            timestamp: Date.now(),
+                            assignedDoctor: null,
+                            prescription: null,
+                            billAmount: null
+                        };
+                        setPatients(prev => [...prev, patient]);
                     }
                     
                     setScannedPatient(patient);
@@ -410,47 +337,35 @@
                 }
             };
 
-            const assignDoctor = async (doctorId) => {
-                if(!scannedPatient || !isDbReady) return;
+            const assignDoctor = (doctorId) => {
+                if(!scannedPatient) return;
                 
-                try {
-                    const { doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
-                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'patients', scannedPatient.id);
-                    await updateDoc(docRef, { 
-                        status: 'In Queue', 
-                        assignedDoctor: doctorId 
-                    });
-                    
-                    setScannedPatient(null);
-                    showMsg("Patient assigned to doctor successfully.", 'success');
-                } catch (error) {
-                    showMsg("Error assigning doctor.", 'error');
-                    console.error(error);
-                }
+                setPatients(prev => prev.map(p => 
+                    p.id === scannedPatient.id 
+                        ? { ...p, status: 'In Queue', assignedDoctor: doctorId } 
+                        : p
+                ));
+                
+                setScannedPatient(null);
+                showMsg("Patient assigned to doctor successfully.", 'success');
             };
 
-            const handleEndSession = async (patientId, prescriptionText) => {
+            const handleEndSession = (patientId, prescriptionText) => {
                 if (!prescriptionText.trim()) {
                     showMsg("Please enter a prescription before ending the session.", 'error');
                     return;
                 }
 
-                try {
-                    const { doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
-                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'patients', patientId);
-                    await updateDoc(docRef, { 
-                        status: 'Prescribed', 
-                        prescription: prescriptionText 
-                    });
-                    
-                    showMsg("Session Ended. Queue freed. Prescription QR generated.", 'success');
-                } catch (error) {
-                    showMsg("Error ending session.", 'error');
-                    console.error(error);
-                }
+                setPatients(prev => prev.map(p => 
+                    p.id === patientId 
+                        ? { ...p, status: 'Prescribed', prescription: prescriptionText } 
+                        : p
+                ));
+                
+                showMsg("Session Ended. Queue freed. Prescription QR generated.", 'success');
             };
 
-            const handlePharmacyScan = async (qrData) => {
+            const handlePharmacyScan = (qrData) => {
                 setScanningFor(null);
                 if (qrData.startsWith("RX|")) {
                     const parts = qrData.split("|");
@@ -458,22 +373,16 @@
                     let patient = patients.find(p => p.id === id);
                     
                     if (!patient) {
-                        try {
-                            patient = {
-                                id: parts[1],
-                                name: parts[2],
-                                prescription: parts.slice(3).join("|"), 
-                                status: 'Prescribed',
-                                timestamp: Date.now()
-                            };
-                            const { doc, setDoc } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
-                            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'patients', patient.id);
-                            await setDoc(docRef, patient);
-                            setBillingPatient(patient);
-                            showMsg("Rx QR Scanned Successfully.", 'success');
-                        } catch (e) {
-                            console.error(e);
-                        }
+                        patient = {
+                            id: parts[1],
+                            name: parts[2],
+                            prescription: parts.slice(3).join("|"), 
+                            status: 'Prescribed',
+                            timestamp: Date.now()
+                        };
+                        setPatients(prev => [...prev, patient]);
+                        setBillingPatient(patient);
+                        showMsg("Rx QR Scanned Successfully.", 'success');
                     } else if (patient && patient.status === 'Prescribed') {
                         setBillingPatient(patient);
                         showMsg("Rx QR Scanned Successfully.", 'success');
@@ -485,24 +394,18 @@
                 }
             };
 
-            const collectPayment = async (e) => {
+            const collectPayment = (e) => {
                 e.preventDefault();
                 const amount = e.target.amount.value;
                 
-                try {
-                    const { doc, updateDoc } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
-                    const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'patients', billingPatient.id);
-                    await updateDoc(docRef, { 
-                        status: 'Completed', 
-                        billAmount: amount 
-                    });
-                    
-                    setBillingPatient(null);
-                    showMsg(`Payment of ₹${amount} collected. Medications dispensed.`, 'success');
-                } catch (error) {
-                    showMsg("Error collecting payment.", "error");
-                    console.error(error);
-                }
+                setPatients(prev => prev.map(p => 
+                    p.id === billingPatient.id 
+                        ? { ...p, status: 'Completed', billAmount: amount } 
+                        : p
+                ));
+                
+                setBillingPatient(null);
+                showMsg(`Payment of ₹${amount} collected. Medications dispensed.`, 'success');
             };
 
             return (
@@ -557,7 +460,6 @@
 
                     <main className="flex-grow container mx-auto px-4 py-8 flex flex-col items-center justify-center relative">
                         
-                        {}
                         {view === 'home' && !currentUser && (
                             <div className="text-center max-w-2xl w-full animate-fade-in">
                                 <div className="w-24 h-24 bg-emerald-100 text-emerald-600 dark:bg-emerald-900/30 dark:text-emerald-400 rounded-full flex items-center justify-center text-4xl mx-auto mb-6 shadow-inner">
@@ -602,7 +504,6 @@
                             </div>
                         )}
 
-                        {}
                         {view === 'register-patient' && (
                             <div className="w-full max-w-xl bg-white dark:bg-slate-800 p-8 rounded-3xl shadow-xl border border-slate-100 dark:border-slate-700 animate-fade-in">
                                 <div className="flex justify-between items-center mb-6">
@@ -630,8 +531,8 @@
                                         <label className="block text-xs font-bold uppercase text-slate-500 mb-1">Primary Symptoms</label>
                                         <textarea required name="symptoms" rows="3" placeholder="Fever, cough, body pain..." className="w-full px-4 py-3 border border-slate-200 dark:border-slate-600 rounded-xl bg-slate-50 dark:bg-slate-900 focus:ring-2 focus:ring-emerald-500 outline-none"></textarea>
                                     </div>
-                                    <button type="submit" disabled={!isDbReady} className="w-full py-4 mt-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold rounded-xl shadow-lg transition">
-                                        {isDbReady ? 'Generate Check-in QR' : 'Connecting to Server...'}
+                                    <button type="submit" className="w-full py-4 mt-2 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg transition">
+                                        Generate Check-in QR
                                     </button>
                                 </form>
                             </div>
@@ -688,7 +589,6 @@
                             </div>
                         )}
 
-                        {}
                         {view === 'admin-dashboard' && currentUser?.role === 'Admin' && (
                             <div className="w-full max-w-5xl animate-fade-in space-y-6">
                                 <div className="flex justify-between items-end mb-4 border-b border-slate-200 dark:border-slate-700 pb-4">
@@ -796,7 +696,6 @@
                             </div>
                         )}
 
-                        {}
                         {view === 'doctor-dashboard' && currentUser?.role === 'Doctor' && (
                             <div className="w-full max-w-4xl animate-fade-in space-y-6">
                                 <div className="flex flex-col md:flex-row justify-between items-center mb-6 pb-4 border-b border-slate-200 dark:border-slate-700">
@@ -811,8 +710,8 @@
                                 </div>
 
                                 {(() => {
-                                    // Live queue driven by synchronized Firestore realtime snapshot
-                                    const myQueue = patients.filter(p => p.assignedDoctor === currentUser.id && p.status === 'In Queue');
+                                    // Live queue driven by synchronized Realtime local storage data
+                                    const myQueue = patients.filter(p => p.assignedDoctor === currentUser.id && p.status === 'In Queue').sort((a, b) => a.timestamp - b.timestamp);
                                     
                                     if (myQueue.length === 0) {
                                         return (
@@ -913,7 +812,7 @@
                                         
                                         <div className="mb-6">
                                             <p className="text-xs font-bold text-slate-400 uppercase mb-2">Doctor's Prescription</p>
-                                            <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-dashed dark:border-slate-700 font-mono text-sm dark:text-slate-300">
+                                            <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl border border-dashed dark:border-slate-700 font-mono text-sm dark:text-slate-300 whitespace-pre-wrap">
                                                 {billingPatient.prescription}
                                             </div>
                                         </div>
@@ -923,7 +822,7 @@
                                                 <label className="block text-xs font-bold uppercase text-emerald-700 dark:text-emerald-400 mb-2">Collect Bill Amount (₹)</label>
                                                 <div className="relative">
                                                     <span className="absolute left-4 top-1/2 transform -translate-y-1/2 text-slate-500 font-bold">₹</span>
-                                                    <input required name="amount" type="number" min="0" placeholder="0.00" className="w-full pl-8 pr-4 py-3 border border-emerald-200 dark:border-emerald-700/50 rounded-xl bg-white dark:bg-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg" />
+                                                    <input required name="amount" type="number" min="0" step="0.01" placeholder="0.00" className="w-full pl-8 pr-4 py-3 border border-emerald-200 dark:border-emerald-700/50 rounded-xl bg-white dark:bg-slate-800 focus:ring-2 focus:ring-emerald-500 outline-none font-bold text-lg" />
                                                 </div>
                                             </div>
                                             <button type="submit" className="w-full py-4 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-lg transition flex items-center justify-center text-lg">
