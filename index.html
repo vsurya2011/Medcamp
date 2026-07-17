@@ -41,7 +41,6 @@
 
         /* =========================================
            QR Scanner Tailwind UI Fixes 
-           (Tailwind hides default buttons, this brings them back)
         ========================================= */
         #reader { width: 100%; border: none !important; border-radius: 12px; overflow: hidden; background: transparent; }
         #reader video { object-fit: cover; border-radius: 12px; width: 100%; }
@@ -113,6 +112,19 @@
             { id: 'u5', email: 'pharm@ngo.com', pass: 'pharm123', role: 'Pharmacy', name: 'Camp Pharmacy' }
         ];
 
+        // Helper to safely parse local storage
+        const getInitialState = (key, defaultValue) => {
+            try {
+                const stored = localStorage.getItem(key);
+                return stored ? JSON.parse(stored) : defaultValue;
+            } catch (e) {
+                console.error(`Error reading ${key} from localStorage`, e);
+                return defaultValue;
+            }
+        };
+
+        // --- Custom Components ---
+
         function MessageBox({ message, type, onClose }) {
             if (!message) return null;
             const bg = type === 'error' ? 'bg-red-100 dark:bg-red-900/30 border-red-500 text-red-700 dark:text-red-400' :
@@ -131,12 +143,11 @@
 
         function QRScanner({ onScan, title, onCancel }) {
             React.useEffect(() => {
-                // Ensure DOM element exists before initializing
                 const scanner = new Html5QrcodeScanner("reader", { 
                     fps: 10, 
                     qrbox: { width: 250, height: 250 },
                     aspectRatio: 1.0,
-                    rememberLastUsedCamera: true, // Helpful for mobile
+                    rememberLastUsedCamera: true, 
                     showTorchButtonIfSupported: true
                 }, false);
                 
@@ -145,7 +156,7 @@
                         scanner.clear();
                         onScan(decodedText);
                     },
-                    (error) => { /* ignore continuous scanning errors (e.g. no QR in frame) */ }
+                    (error) => { /* ignore continuous scanning frame errors */ }
                 );
                 
                 return () => {
@@ -160,14 +171,12 @@
                         <button onClick={onCancel} className="text-slate-400 hover:text-red-500"><i className="fa-solid fa-xmark text-xl"></i></button>
                     </div>
                     <div id="reader" className="w-full bg-slate-50 dark:bg-slate-900 rounded-xl min-h-[300px] flex flex-col items-center justify-center border-2 border-dashed border-slate-300 dark:border-slate-600">
-                        {/* Html5QrcodeScanner mounts here */}
                     </div>
                     <p className="text-xs text-center text-slate-500 mt-4">Allow camera permissions if prompted to scan directly from your device.</p>
                 </div>
             );
         }
 
-        // Extracted into a memoized component so React doesn't re-render it and conflict with Google's scripts
         const GoogleTranslate = React.memo(() => {
             return (
                 <div className="flex items-center justify-center mt-2 md:mt-0">
@@ -177,19 +186,23 @@
         }, () => true);
 
         function App() {
-            // App State
-            const [users, setUsers] = React.useState(defaultUsers);
-            const [patients, setPatients] = React.useState([]);
-            const [currentUser, setCurrentUser] = React.useState(null);
+            // App State (Hydrated from localStorage for cross-refresh persistence)
+            const [users, setUsers] = React.useState(() => getInitialState('carenet_users', defaultUsers));
+            const [patients, setPatients] = React.useState(() => getInitialState('carenet_patients', []));
+            const [currentUser, setCurrentUser] = React.useState(() => getInitialState('carenet_currentUser', null));
+            const [myPatientId, setMyPatientId] = React.useState(() => getInitialState('carenet_myPatientId', null));
             
             // UI State
-            const [view, setView] = React.useState('home'); 
+            const [view, setView] = React.useState(() => {
+                const user = getInitialState('carenet_currentUser', null);
+                return user ? `${user.role.toLowerCase()}-dashboard` : 'home';
+            }); 
             const [darkMode, setDarkMode] = React.useState(false);
             const [message, setMessage] = React.useState(null);
             const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
-            
-            // Active Session Tracking for demo (tracks latest patient created on this device)
-            const [myPatientId, setMyPatientId] = React.useState(null);
+            const [scanningFor, setScanningFor] = React.useState(null);
+            const [scannedPatient, setScannedPatient] = React.useState(null);
+            const [billingPatient, setBillingPatient] = React.useState(null);
 
             // Helpers
             const showMsg = (msg, type = 'info') => {
@@ -199,6 +212,22 @@
 
             const getDoctorQueueCount = (docId) => patients.filter(p => p.assignedDoctor === docId && p.status === 'In Queue').length;
             const getQRImage = (text) => `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(text)}`;
+
+            // Save state changes to Local Storage
+            React.useEffect(() => localStorage.setItem('carenet_users', JSON.stringify(users)), [users]);
+            React.useEffect(() => localStorage.setItem('carenet_patients', JSON.stringify(patients)), [patients]);
+            React.useEffect(() => localStorage.setItem('carenet_currentUser', JSON.stringify(currentUser)), [currentUser]);
+            React.useEffect(() => localStorage.setItem('carenet_myPatientId', JSON.stringify(myPatientId)), [myPatientId]);
+
+            // Sync state across multiple tabs automatically
+            React.useEffect(() => {
+                const handleStorage = (e) => {
+                    if (e.key === 'carenet_patients' && e.newValue) setPatients(JSON.parse(e.newValue));
+                    if (e.key === 'carenet_users' && e.newValue) setUsers(JSON.parse(e.newValue));
+                };
+                window.addEventListener('storage', handleStorage);
+                return () => window.removeEventListener('storage', handleStorage);
+            }, []);
 
             // Handle Dark Mode
             React.useEffect(() => {
@@ -212,7 +241,7 @@
                     window.googleTranslateElementInit = () => {
                         new window.google.translate.TranslateElement({
                             pageLanguage: 'en',
-                            includedLanguages: 'ta,en', // Specify Tamil and English
+                            includedLanguages: 'ta,en',
                             layout: window.google.translate.TranslateElement.InlineLayout.SIMPLE
                         }, 'google_translate_element');
                     };
@@ -292,9 +321,6 @@
                 showMsg("User removed from system.", 'info');
             };
 
-            const [scanningFor, setScanningFor] = React.useState(null);
-            const [scannedPatient, setScannedPatient] = React.useState(null);
-
             const handleVolunteerScan = (qrData) => {
                 setScanningFor(null);
                 if (qrData.startsWith("PATIENT|")) {
@@ -302,21 +328,20 @@
                     const id = parts[1];
                     let patient = patients.find(p => p.id === id);
                     
-                    // FIX: Reconstruct patient if scanned from a different device
+                    // If patient scanned from external device and not in our DB yet
                     if (!patient) {
                         patient = {
                             id: parts[1],
                             name: parts[2],
                             age: parts[3],
                             gender: parts[4],
-                            symptoms: parts.slice(5).join("|"), // Get rest of string in case symptoms contain |
+                            symptoms: parts.slice(5).join("|"), 
                             status: "Awaiting Volunteer",
                             timestamp: Date.now(),
                             assignedDoctor: null,
                             prescription: null,
                             billAmount: null
                         };
-                        // Add this new external patient to our local state so we can assign a doctor
                         setPatients(prev => [...prev, patient]);
                     }
                     
@@ -329,9 +354,12 @@
 
             const assignDoctor = (doctorId) => {
                 if(!scannedPatient) return;
+                
+                // Directly map over the most current patients array to ensure data consistency
                 setPatients(prevPatients => prevPatients.map(p => 
                     p.id === scannedPatient.id ? { ...p, status: 'In Queue', assignedDoctor: doctorId } : p
                 ));
+                
                 setScannedPatient(null);
                 showMsg("Patient assigned to doctor successfully.", 'success');
             };
@@ -347,8 +375,6 @@
                 showMsg("Session Ended. Prescription QR generated.", 'success');
             };
 
-            const [billingPatient, setBillingPatient] = React.useState(null);
-            
             const handlePharmacyScan = (qrData) => {
                 setScanningFor(null);
                 if (qrData.startsWith("RX|")) {
@@ -356,7 +382,6 @@
                     const id = parts[1];
                     let patient = patients.find(p => p.id === id);
                     
-                    // FIX: Reconstruct patient if Rx scanned from a different device
                     if (!patient) {
                         patient = {
                             id: parts[1],
@@ -413,16 +438,13 @@
                         {/* Navigation Items (Responsive) */}
                         <div className={`${isMobileMenuOpen ? 'flex' : 'hidden'} md:flex flex-col md:flex-row w-full md:w-auto mt-4 md:mt-0 space-y-4 md:space-y-0 md:space-x-4 items-center bg-white/95 dark:bg-slate-800/95 md:bg-transparent md:dark:bg-transparent p-4 md:p-0 rounded-2xl md:rounded-none shadow-xl md:shadow-none absolute md:relative top-16 md:top-auto left-4 right-4 md:left-auto md:right-auto border md:border-none dark:border-slate-700`}>
                             
-                            {/* 1. Translate Button */}
                             <GoogleTranslate />
 
-                            {/* 2. Theme Toggle */}
                             <button onClick={() => setDarkMode(!darkMode)} className="text-slate-600 dark:text-amber-400 hover:bg-slate-100 dark:hover:bg-slate-700 p-2.5 rounded-xl flex items-center justify-center w-full md:w-auto transition">
                                 <i className={`fa-solid ${darkMode ? 'fa-sun' : 'fa-moon'} text-lg md:mr-0 mr-3`}></i>
                                 <span className="md:hidden font-semibold">Change Theme</span>
                             </button>
                             
-                            {/* 3. Auth Controls */}
                             {currentUser ? (
                                 <div className="flex flex-col md:flex-row w-full md:w-auto items-center space-y-3 md:space-y-0 md:space-x-3">
                                     <span className="text-sm font-semibold text-slate-600 dark:text-slate-300 px-4 py-2 bg-slate-100 dark:bg-slate-900 rounded-xl border dark:border-slate-700 w-full md:w-auto text-center shadow-sm">
@@ -441,6 +463,7 @@
                         </div>
                     </nav>
 
+                    {}
                     <main className="flex-grow container mx-auto px-4 py-8 flex flex-col items-center justify-center relative">
                         
                         {/* VIEW: HOME */}
@@ -522,6 +545,7 @@
                             </div>
                         )}
 
+                        {}
                         {/* VIEW: PATIENT PORTAL (QR Display) */}
                         {view === 'patient-portal' && myPatientId && (
                             <div className="w-full max-w-md animate-fade-in space-y-6">
@@ -590,7 +614,6 @@
                                 </div>
 
                                 <div className="grid md:grid-cols-3 gap-6">
-                                    {/* Add User Form */}
                                     <div className="md:col-span-1 bg-white dark:bg-slate-800 p-6 rounded-2xl border dark:border-slate-700 shadow-sm h-fit">
                                         <h3 className="font-bold text-lg mb-4 flex items-center"><i className="fa-solid fa-user-plus mr-2 text-emerald-500"></i> Add Staff Member</h3>
                                         <form onSubmit={handleAddUser} className="space-y-4">
@@ -604,7 +627,6 @@
                                         </form>
                                     </div>
 
-                                    {/* List Users */}
                                     <div className="md:col-span-2 bg-white dark:bg-slate-800 p-6 rounded-2xl border dark:border-slate-700 shadow-sm">
                                         <h3 className="font-bold text-lg mb-4 flex items-center"><i className="fa-solid fa-users-gear mr-2 text-blue-500"></i> Active System Members</h3>
                                         <div className="space-y-3">
@@ -630,6 +652,7 @@
                             </div>
                         )}
 
+                        {}
                         {/* VIEW: VOLUNTEER DASHBOARD */}
                         {view === 'volunteer-dashboard' && currentUser?.role === 'Volunteer' && (
                             <div className="w-full max-w-4xl animate-fade-in space-y-6">
@@ -686,6 +709,7 @@
                             </div>
                         )}
 
+                        {}
                         {/* VIEW: DOCTOR DASHBOARD */}
                         {view === 'doctor-dashboard' && currentUser?.role === 'Doctor' && (
                             <div className="w-full max-w-4xl animate-fade-in space-y-6">
@@ -701,6 +725,7 @@
                                 </div>
 
                                 {(() => {
+                                    // Live queue driven by synchronized localStorage
                                     const myQueue = patients.filter(p => p.assignedDoctor === currentUser.id && p.status === 'In Queue');
                                     
                                     if (myQueue.length === 0) {
@@ -715,12 +740,10 @@
                                         );
                                     }
 
-                                    // Top patient is active session
                                     const activePatient = myQueue[0];
 
                                     return (
                                         <div className="grid md:grid-cols-5 gap-6">
-                                            {/* Active Session Panel */}
                                             <div className="md:col-span-3 bg-white dark:bg-slate-800 rounded-3xl shadow-xl border-2 border-blue-400 overflow-hidden relative">
                                                 <div className="bg-blue-600 text-white text-xs font-bold uppercase tracking-widest py-1.5 text-center">Active Session</div>
                                                 <div className="p-6 md:p-8 space-y-6">
@@ -750,7 +773,6 @@
                                                 </div>
                                             </div>
 
-                                            {/* Waiting Queue Panel */}
                                             <div className="md:col-span-2 space-y-4">
                                                 <h3 className="font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wide text-sm flex items-center">
                                                     <i className="fa-solid fa-list-ul mr-2"></i> Next in line ({myQueue.length - 1})
@@ -776,6 +798,7 @@
                             </div>
                         )}
 
+                        {}
                         {/* VIEW: PHARMACY DASHBOARD */}
                         {view === 'pharmacy-dashboard' && currentUser?.role === 'Pharmacy' && (
                             <div className="w-full max-w-4xl animate-fade-in space-y-6">
