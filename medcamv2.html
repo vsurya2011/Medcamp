@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NGO Medical Camp Management System</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class', }
+    </script>
+    
+    <!-- Icons & Fonts -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- React & Babel -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- QR Code Scanner -->
+    <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-database-compat.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; transition: background-color 0.3s, color 0.3s; }
+        .glass-card { background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(12px); border: 1px solid rgba(255, 255, 255, 0.2); }
+        .dark .glass-card { background: rgba(31, 41, 55, 0.85); border: 1px solid rgba(255, 255, 255, 0.1); }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-green-50 to-blue-50 dark:from-gray-900 dark:to-gray-800 min-h-screen text-gray-800 dark:text-gray-100">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // --- FIREBASE INITIALIZATION ---
+        const firebaseConfig = {
+            apiKey: "AIzaSyAF618lKOOC94WIJgIr2P93txBQEb1ELaQ",
+            authDomain: "medcamp-6a0f8.firebaseapp.com",
+            databaseURL: "https://medcamp-6a0f8-default-rtdb.firebaseio.com",
+            projectId: "medcamp-6a0f8",
+            storageBucket: "medcamp-6a0f8.firebasestorage.app",
+            messagingSenderId: "59157365780",
+            appId: "1:59157365780:web:9180b6954ee676a0301301",
+            measurementId: "G-F6S9EWEGRE"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.database();
+
+        // --- TRANSLATIONS ---
+        const translations = {
+            en: {
+                title: "CareNet NGO", subtitle: "Healthcare for Everyone", home: "Home", login: "Portal Login",
+                heroTitle: "Free Medical Camp Initiative", heroDesc: "Bringing professional healthcare, life-saving diagnostics, and free medications to underserved communities.",
+                registerNow: "Patient Desk", fullName: "Full Patient Name", namePh: "e.g. Kumar Swamy",
+                age: "Age", agePh: "45", gender: "Gender", blood: "Blood Group", bloodPh: "O+",
+                symptoms: "Primary Complaints", sympPh: "Describe symptoms...", generateQR: "Create Check-In QR",
+                email: "Email Address", pass: "Password", signIn: "Secure Sign In", logout: "Logout",
+                admin: "Admin", volunteer: "Volunteer", doctor: "Doctor", pharmacy: "Pharmacy"
+            },
+            ta: {
+                title: "கேர்நெட் NGO", subtitle: "அனைவருக்கும் மருத்துவம்", home: "முகப்பு", login: "உள்நுழைவு",
+                heroTitle: "இலவச மருத்துவ முகாம் திட்டம்", heroDesc: "பின்தங்கிய சமூகங்களுக்கு தொழில்முறை சுகாதாரம் மற்றும் இலவச மருந்துகளை வழங்குதல்.",
+                registerNow: "நோயாளி பதிவு", fullName: "முழு பெயர்", namePh: "உ.ம்: குமார்",
+                age: "வயது", agePh: "45", gender: "பாலினம்", blood: "இரத்த வகை", bloodPh: "O+",
+                symptoms: "அறிகுறிகள்", sympPh: "விவரிக்கவும்...", generateQR: "க்யூஆர் உருவாக்கு",
+                email: "மின்னஞ்சல்", pass: "கடவுச்சொல்", signIn: "உள்நுழை", logout: "வெளியேறு",
+                admin: "நிர்வாகி", volunteer: "தன்னார்வலர்", doctor: "மருத்துவர்", pharmacy: "மருந்தகம்"
+            }
+        };
+
+        // --- QR SCANNER COMPONENT ---
+        function QRScanner({ onScan, title }) {
+            React.useEffect(() => {
+                const scanner = new Html5QrcodeScanner("reader", { fps: 10, qrbox: {width: 250, height: 250} });
+                scanner.render((decodedText) => { scanner.clear(); onScan(decodedText); }, (error) => {});
+                return () => scanner.clear();
+            }, []);
+            return (
+                <div className="w-full max-w-md mx-auto bg-white dark:bg-gray-800 p-4 rounded-xl shadow-lg border dark:border-gray-700">
+                    <h3 className="text-center font-bold mb-4 dark:text-white">{title}</h3>
+                    <div id="reader" className="w-full text-black"></div>
+                </div>
+            );
+        }
+
+        // --- MAIN APP COMPONENT ---
+        function App() {
+            const [view, setView] = React.useState('home'); 
+            const [lang, setLang] = React.useState('en');
+            const [darkMode, setDarkMode] = React.useState(false);
+            const [menuOpen, setMenuOpen] = React.useState(false);
+            
+            // App State
+            const [patients, setPatients] = React.useState([]);
+            const [users, setUsers] = React.useState([]);
+            const [activeUser, setActiveUser] = React.useState(null); 
+            
+            const t = translations[lang];
+
+            React.useEffect(() => {
+                if(darkMode) document.documentElement.classList.add('dark');
+                else document.documentElement.classList.remove('dark');
+            }, [darkMode]);
+
+            // Fetch Data & Auto-Seed Users
+            React.useEffect(() => {
+                // 1. Listen to Users
+                const usersRef = db.ref('users');
+                usersRef.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    if(data) {
+                        setUsers(Object.keys(data).map(key => ({ id: key, ...data[key] })));
+                    } else {
+                        // Auto-Seed Data if empty
+                        const initialUsers = {
+                            u1: { email: 'admin@ngo.com', pass: 'admin123', role: 'Admin', name: 'Super Admin' },
+                            u2: { email: 'vol@ngo.com', pass: 'vol123', role: 'Volunteer', name: 'Station Vol 1' },
+                            u3: { email: 'doc1@ngo.com', pass: 'doc123', role: 'Doctor', name: 'Dr. Anand' },
+                            u4: { email: 'doc2@ngo.com', pass: 'doc234', role: 'Doctor', name: 'Dr. Priya' },
+                            u5: { email: 'pharm@ngo.com', pass: 'pharm123', role: 'Pharmacy', name: 'Main Pharmacy' }
+                        };
+                        usersRef.set(initialUsers);
+                    }
+                });
+
+                // 2. Listen to Patients
+                const patientsRef = db.ref('patients');
+                patientsRef.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    if(data) setPatients(Object.keys(data).map(key => ({ id: key, ...data[key] })).reverse());
+                    else setPatients([]);
+                });
+
+                return () => { usersRef.off(); patientsRef.off(); };
+            }, []);
+
+            // Login Logic
+            const handleLoginSubmit = (e) => {
+                e.preventDefault();
+                const email = e.target.email.value;
+                const pass = e.target.pass.value;
+                
+                const foundUser = users.find(u => u.email === email && u.pass === pass);
+                if(foundUser) {
+                    setActiveUser(foundUser);
+                    setView(`${foundUser.role.toLowerCase()}-dashboard`);
+                } else {
+                    alert("Invalid Email or Password!");
+                }
+            };
+
+            const logOut = () => { setActiveUser(null); setView('home'); setMenuOpen(false); };
+            const getQRImage = (text) => `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(text)}`;
+
+            // Helper to check if a doctor is free
+            const getDoctorQueueCount = (docId) => patients.filter(p => p.assignedDoctor === docId && p.status === 'With Doctor').length;
+
+            return (
+                <div className="flex flex-col min-h-screen">
+                    
+                    {/* NAVBAR */}
+                    <nav className="sticky top-0 z-50 glass-card shadow-sm px-6 py-4 flex justify-between items-center border-b dark:border-gray-700">
+                        <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setView('home')}>
+                            <div className="bg-emerald-600 text-white p-2.5 rounded-xl shadow-md"><i className="fa-solid fa-house-medical text-xl"></i></div>
+                            <div>
+                                <span className="font-bold text-xl tracking-tight text-emerald-700 dark:text-emerald-400 block">{t.title}</span>
+                                <span className="text-xs font-medium text-gray-500 dark:text-gray-400 block -mt-1">{t.subtitle}</span>
+                            </div>
+                        </div>
+
+                        <div className="hidden md:flex items-center space-x-6">
+                            <button onClick={() => setView('home')} className="font-semibold hover:text-emerald-600">{t.home}</button>
+                            <button onClick={() => setLang(lang === 'en' ? 'ta' : 'en')} className="px-3 py-1 text-xs font-semibold bg-gray-200 dark:bg-gray-700 rounded-full hover:bg-gray-300 transition">
+                                <i className="fa-solid fa-language mr-1"></i> {lang === 'en' ? 'தமிழ்' : 'English'}
+                            </button>
+                            <button onClick={() => setDarkMode(!darkMode)} className="text-gray-500 dark:text-yellow-400 text-xl hover:text-gray-700"><i className={`fa-solid ${darkMode ? 'fa-sun' : 'fa-moon'}`}></i></button>
+                            {activeUser ? (
+                                <button onClick={logOut} className="text-sm font-bold text-red-500 hover:text-red-600">{t.logout} ({activeUser.name})</button>
+                            ) : (
+                                <button onClick={() => setView('login-gateway')} className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-sm font-semibold shadow-md"><i className="fa-solid fa-right-to-bracket mr-2"></i>{t.login}</button>
+                            )}
+                        </div>
+                        <div className="md:hidden"><button onClick={() => setMenuOpen(!menuOpen)} className="text-2xl text-gray-700 dark:text-gray-200"><i className={`fa-solid ${menuOpen ? 'fa-xmark' : 'fa-bars'}`}></i></button></div>
+                    </nav>
+
+                    {/* MOBILE MENU */}
+                    {menuOpen && (
+                        <div className="md:hidden absolute top-20 left-0 w-full glass-card border-b dark:border-gray-700 shadow-lg z-40 flex flex-col p-4 space-y-4 font-semibold text-center">
+                            <button onClick={() => { setView('home'); setMenuOpen(false); }}>{t.home}</button>
+                            <div className="flex justify-center space-x-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                                <button onClick={() => setDarkMode(!darkMode)} className="text-gray-600 dark:text-yellow-400"><i className={`fa-solid ${darkMode ? 'fa-sun' : 'fa-moon'} mr-2`}></i> Theme</button>
+                                <button onClick={() => setLang(lang === 'en' ? 'ta' : 'en')} className="text-gray-600 dark:text-gray-200"><i className="fa-solid fa-language mr-2"></i> {lang === 'en' ? 'தமிழ்' : 'English'}</button>
+                            </div>
+                            {activeUser ? <button onClick={logOut} className="text-red-500 py-2">{t.logout}</button> : <button onClick={() => { setView('login-gateway'); setMenuOpen(false); }} className="bg-emerald-600 text-white py-2 rounded-xl">{t.login}</button>}
+                        </div>
+                    )}
+
+                    {/* MAIN ROUTER */}
+                    <main className="flex-grow container mx-auto px-4 py-8">
+                        
+                        {/* 1. HOME */}
+                        {view === 'home' && (
+                            <div className="text-center max-w-3xl mx-auto space-y-6 mt-10">
+                                <h1 className="text-4xl md:text-5xl font-extrabold text-gray-900 dark:text-white leading-tight">{t.heroTitle}</h1>
+                                <p className="text-gray-600 dark:text-gray-300 text-lg">{t.heroDesc}</p>
+                                <div className="flex justify-center flex-wrap gap-4 pt-6">
+                                    <button onClick={() => setView('patient-portal')} className="bg-emerald-600 text-white font-bold px-8 py-4 rounded-full shadow-lg"><i className="fa-solid fa-user-injured mr-2"></i> {t.registerNow}</button>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 2. LOGIN GATEWAY */}
+                        {view === 'login-gateway' && (
+                            <div className="max-w-md mx-auto bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-xl border dark:border-gray-700">
+                                <h2 className="text-2xl font-bold mb-6 text-center">{t.signIn}</h2>
+                                <form onSubmit={handleLoginSubmit} className="space-y-4">
+                                    <div><label className="block text-xs font-bold uppercase mb-1">{t.email}</label>
+                                    <input required name="email" type="email" placeholder="user@ngo.com" className="w-full px-4 py-2 border dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 dark:text-white" /></div>
+                                    <div><label className="block text-xs font-bold uppercase mb-1">{t.pass}</label>
+                                    <input required name="pass" type="password" placeholder="••••••••" className="w-full px-4 py-2 border dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 dark:text-white" /></div>
+                                    
+                                    {/* Quick testing hints */}
+                                    <div className="text-[10px] text-gray-400 bg-gray-100 dark:bg-gray-700 p-2 rounded">
+                                        Test Logins:<br/>Admin: admin@ngo.com | Vol: vol@ngo.com<br/>Doc: doc1@ngo.com | Pharm: pharm@ngo.com<br/>Pass for all: (Check initial DB script, usually doc123/vol123)
+                                    </div>
+
+                                    <button type="submit" className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl shadow-md">{t.signIn}</button>
+                                </form>
+                            </div>
+                        )}
+
+                        {/* 3. PATIENT PORTAL */}
+                        {view === 'patient-portal' && (
+                            <div className="max-w-2xl mx-auto bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-xl border dark:border-gray-700">
+                                <h2 className="text-2xl font-bold mb-6">{t.registerNow}</h2>
+                                
+                                {patients.filter(p => p.status === 'Awaiting Verification' || p.status === 'Prescribed').length > 0 ? (
+                                    <div className="space-y-6">
+                                        {patients.filter(p => p.status === 'Awaiting Verification' || p.status === 'Prescribed').map(p => (
+                                            <div key={p.id} className="p-6 bg-emerald-50 dark:bg-gray-700 rounded-2xl border-2 border-emerald-200 dark:border-gray-600 border-dashed text-center">
+                                                <h3 className="font-bold mb-2 dark:text-white">{p.status === 'Prescribed' ? 'Pharmacy Rx QR Code' : 'Your Registration QR'}</h3>
+                                                
+                                                {/* Readable QR Encoding */}
+                                                <img src={getQRImage(p.status === 'Prescribed' ? `RX|${p.name}|${p.prescription}` : `PATIENT|${p.id}|${p.name}`)} alt="QR Code" className="mx-auto border-4 border-white rounded-xl shadow-sm mb-4" />
+                                                
+                                                <p className="text-sm dark:text-gray-300">{p.name} - Status: <span className="text-emerald-600 dark:text-emerald-400 font-bold">{p.status}</span></p>
+                                                
+                                                {p.status === 'Prescribed' && (
+                                                    <p className="mt-2 text-xs text-gray-500 font-mono">Show this Rx to Pharmacy to collect medicines.</p>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <form onSubmit={(e) => {
+                                        e.preventDefault();
+                                        const fd = new FormData(e.target);
+                                        db.ref('patients').push({
+                                            name: fd.get('name'), age: fd.get('age'), gender: fd.get('gender'),
+                                            blood: fd.get('blood'), disease: fd.get('symptoms'),
+                                            status: "Awaiting Verification", timestamp: Date.now()
+                                        });
+                                    }} className="space-y-4">
+                                        <div><label className="block text-xs font-bold uppercase mb-1">{t.fullName}</label>
+                                        <input required name="name" type="text" placeholder={t.namePh} className="w-full px-4 py-2 border dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 dark:text-white" /></div>
+                                        <div className="grid grid-cols-3 gap-4">
+                                            <div><label className="block text-xs font-bold uppercase mb-1">{t.age}</label>
+                                            <input required name="age" type="number" placeholder={t.agePh} className="w-full px-4 py-2 border dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 dark:text-white" /></div>
+                                            <div><label className="block text-xs font-bold uppercase mb-1">{t.gender}</label>
+                                            <select name="gender" className="w-full px-4 py-2 border dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 dark:text-white"><option>Male</option><option>Female</option></select></div>
+                                            <div><label className="block text-xs font-bold uppercase mb-1">{t.blood}</label>
+                                            <input name="blood" type="text" placeholder={t.bloodPh} className="w-full px-4 py-2 border dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 dark:text-white" /></div>
+                                        </div>
+                                        <div><label className="block text-xs font-bold uppercase mb-1">{t.symptoms}</label>
+                                        <textarea name="symptoms" placeholder={t.sympPh} className="w-full px-4 py-2 border dark:border-gray-600 rounded-xl bg-gray-50 dark:bg-gray-700 dark:text-white"></textarea></div>
+                                        <button type="submit" className="w-full py-3 bg-emerald-600 text-white font-bold rounded-xl">{t.generateQR}</button>
+                                    </form>
+                                )}
+                            </div>
+                        )}
+
+                        {/* 4. ADMIN DASHBOARD */}
+                        {view === 'admin-dashboard' && (
+                            <div className="max-w-4xl mx-auto space-y-6">
+                                <h2 className="text-2xl font-bold text-slate-700 dark:text-slate-300">Admin Control Panel</h2>
+                                <div className="grid md:grid-cols-2 gap-6">
+                                    <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border dark:border-gray-700">
+                                        <h3 className="font-bold mb-4 border-b pb-2 dark:border-gray-700">Add New Member</h3>
+                                        <form onSubmit={(e) => {
+                                            e.preventDefault();
+                                            const fd = new FormData(e.target);
+                                            db.ref('users').push({
+                                                name: fd.get('name'), email: fd.get('email'), pass: fd.get('pass'), role: fd.get('role')
+                                            });
+                                            e.target.reset();
+                                            alert("Member Added!");
+                                        }} className="space-y-3 text-sm">
+                                            <input required name="name" type="text" placeholder="Full Name" className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+                                            <input required name="email" type="email" placeholder="Email Address" className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+                                            <input required name="pass" type="password" placeholder="Password" className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+                                            <select name="role" className="w-full px-3 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                                                <option>Volunteer</option><option>Doctor</option><option>Pharmacy</option>
+                                            </select>
+                                            <button type="submit" className="w-full py-2 bg-slate-800 text-white font-bold rounded-lg hover:bg-slate-900">Create Account</button>
+                                        </form>
+                                    </div>
+                                    <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border dark:border-gray-700">
+                                        <h3 className="font-bold mb-4 border-b pb-2 dark:border-gray-700">Active Members</h3>
+                                        <div className="space-y-2 max-h-64 overflow-y-auto">
+                                            {users.map(u => (
+                                                <div key={u.id} className="flex justify-between items-center p-2 border rounded dark:border-gray-600 text-sm">
+                                                    <div>
+                                                        <span className="font-bold block dark:text-white">{u.name}</span>
+                                                        <span className="text-xs text-gray-500">{u.role} | {u.email}</span>
+                                                    </div>
+                                                    {u.id !== activeUser.id && (
+                                                        <button onClick={() => db.ref('users/' + u.id).remove()} className="text-red-500 hover:text-red-700"><i className="fa-solid fa-trash"></i></button>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 5. VOLUNTEER DASHBOARD */}
+                        {view === 'volunteer-dashboard' && (
+                            <div className="max-w-2xl mx-auto space-y-6">
+                                <h2 className="text-2xl font-bold text-amber-600 dark:text-amber-400">Volunteer Desk</h2>
+                                
+                                <QRScanner title="Scan Patient QR Code" onScan={(decodedText) => {
+                                    if(decodedText.startsWith("PATIENT|")) {
+                                        const pId = decodedText.split("|")[1];
+                                        db.ref('patients/' + pId).update({ status: 'Scanned By Volunteer' });
+                                        alert('Patient Scanned! Please assign a doctor below.');
+                                    } else {
+                                        alert("Invalid Patient QR Format");
+                                    }
+                                }} />
+
+                                <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border dark:border-gray-700">
+                                    <h3 className="font-bold mb-3 border-b pb-2 dark:border-gray-700">Patients Awaiting Assignment</h3>
+                                    {patients.filter(p=>p.status === 'Scanned By Volunteer').map(p => (
+                                        <div key={p.id} className="py-3 border-b dark:border-gray-700 space-y-2">
+                                            <div className="flex justify-between font-bold dark:text-white"><span>{p.name}</span><span className="text-xs text-gray-500">{p.age}y / {p.disease}</span></div>
+                                            <div className="flex gap-2">
+                                                <select id={`doc-assign-${p.id}`} className="flex-1 px-3 py-1 text-sm border rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                                                    <option value="">Select Doctor...</option>
+                                                    {users.filter(u=>u.role==='Doctor').map(doc => {
+                                                        const queueLen = getDoctorQueueCount(doc.id);
+                                                        return <option key={doc.id} value={doc.id}>{doc.name} - {queueLen === 0 ? 'FREE' : `Queue: ${queueLen}`}</option>
+                                                    })}
+                                                </select>
+                                                <button onClick={() => {
+                                                    const selDoc = document.getElementById(`doc-assign-${p.id}`).value;
+                                                    if(!selDoc) return alert("Select a doctor first!");
+                                                    db.ref('patients/' + p.id).update({ status: 'With Doctor', assignedDoctor: selDoc });
+                                                }} className="px-4 py-1 bg-amber-500 text-white font-bold rounded hover:bg-amber-600 text-sm">Assign</button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                    {patients.filter(p=>p.status === 'Scanned By Volunteer').length === 0 && <p className="text-sm text-gray-500">No scanned patients waiting.</p>}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 6. DOCTOR DASHBOARD */}
+                        {view === 'doctor-dashboard' && (
+                            <div className="max-w-3xl mx-auto space-y-6">
+                                <h2 className="text-2xl font-bold text-sky-600 dark:text-sky-400">Doctor Dashboard - {activeUser.name}</h2>
+                                <p className="text-sm dark:text-gray-300">Your Current Queue: {getDoctorQueueCount(activeUser.id)} Patient(s)</p>
+                                
+                                <div className="space-y-4">
+                                    {patients.filter(p=>p.status === 'With Doctor' && p.assignedDoctor === activeUser.id).map((p, index) => (
+                                        <div key={p.id} className={`p-6 rounded-2xl border dark:border-gray-700 ${index === 0 ? 'bg-sky-50 dark:bg-gray-800 shadow-md border-sky-200' : 'bg-gray-50 dark:bg-gray-700 opacity-60 pointer-events-none'}`}>
+                                            {index === 0 && <span className="bg-sky-600 text-white text-[10px] font-bold px-2 py-1 rounded uppercase tracking-wider mb-2 inline-block">Active Session</span>}
+                                            <div className="flex justify-between font-bold mb-2 dark:text-white text-lg"><span>{p.name}</span><span className="text-sm text-gray-500">{p.age}y / {p.gender}</span></div>
+                                            <p className="text-sm text-gray-700 dark:text-gray-300 mb-4 bg-white dark:bg-gray-700 p-3 rounded border dark:border-gray-600"><strong>Symptoms:</strong> {p.disease}</p>
+                                            
+                                            {index === 0 && (
+                                                <form onSubmit={(e) => {
+                                                    e.preventDefault();
+                                                    db.ref('patients/' + p.id).update({ 
+                                                        status: 'Prescribed',
+                                                        prescription: e.target.rx.value
+                                                    });
+                                                }}>
+                                                    <textarea name="rx" required placeholder="Write medication names and dosage..." className="w-full px-3 py-2 mb-2 border dark:border-gray-600 rounded-lg bg-white dark:bg-gray-900 dark:text-white text-sm"></textarea>
+                                                    <div className="flex gap-2">
+                                                        <button type="submit" className="flex-1 py-2 bg-emerald-600 text-white font-bold rounded-lg text-sm">Prescribe & Generate Rx QR</button>
+                                                        <button type="button" onClick={() => {
+                                                            if(window.confirm("End session and mark patient as completed without meds?")) {
+                                                                db.ref('patients/' + p.id).update({ status: 'Completed (No Meds)' });
+                                                            }
+                                                        }} className="px-4 py-2 bg-gray-500 text-white font-bold rounded-lg text-sm">End Session (No Rx)</button>
+                                                    </div>
+                                                </form>
+                                            )}
+                                        </div>
+                                    ))}
+                                    {getDoctorQueueCount(activeUser.id) === 0 && (
+                                        <div className="p-8 text-center bg-gray-50 dark:bg-gray-800 rounded-xl border dark:border-gray-700 text-gray-500">
+                                            <i className="fa-solid fa-mug-hot text-3xl mb-3"></i>
+                                            <p className="font-bold">You are currently Free.</p>
+                                            <p className="text-sm">Volunteers will see you as available for assignment.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* 7. PHARMACY DASHBOARD */}
+                        {view === 'pharmacy-dashboard' && (
+                            <div className="max-w-2xl mx-auto space-y-6">
+                                <h2 className="text-2xl font-bold text-rose-600 dark:text-rose-400">Pharmacy & Billing Desk</h2>
+                                
+                                <QRScanner title="Scan Patient Rx QR Code" onScan={(decodedText) => {
+                                    if(decodedText.startsWith("RX|")) {
+                                        const [, name, meds] = decodedText.split("|");
+                                        const amount = prompt(`Prescription for ${name}:\n\nMedicines: ${meds}\n\nEnter Bill Amount to collect (₹):`);
+                                        if(amount !== null && amount !== "") {
+                                            // Normally we'd find by ID to update status, but to keep scan simple:
+                                            // Let's find patient by name & status in our state to update them
+                                            const pTarget = patients.find(p => p.name === name && p.status === 'Prescribed');
+                                            if(pTarget) {
+                                                db.ref('patients/' + pTarget.id).update({ status: 'Medicines Dispensed & Paid', billAmount: amount });
+                                                alert(`Payment of ₹${amount} collected successfully!`);
+                                            } else {
+                                                alert("Patient record not found or already dispensed.");
+                                            }
+                                        }
+                                    } else {
+                                        alert("Invalid Rx QR Format");
+                                    }
+                                }} />
+                                
+                                <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border dark:border-gray-700">
+                                    <h3 className="font-bold mb-3 text-emerald-600">Recently Billed & Dispensed</h3>
+                                    {patients.filter(p=>p.status === 'Medicines Dispensed & Paid').slice(0,5).map(p => (
+                                        <div key={p.id} className="py-2 border-b dark:border-gray-700 flex justify-between text-sm items-center">
+                                            <span className="font-medium dark:text-white">{p.name}</span> 
+                                            <span className="bg-emerald-100 text-emerald-800 font-bold px-2 py-1 rounded">₹{p.billAmount || 0} Collected</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
