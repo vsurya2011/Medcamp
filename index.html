@@ -267,7 +267,7 @@
                     billAmount: null
                 };
                 
-                setPatients([...patients, newPatient]);
+                setPatients(prev => [...prev, newPatient]);
                 setMyPatientId(newPatient.id);
                 showMsg("Registration successful! Please show your QR to the volunteer.", 'success');
             };
@@ -298,13 +298,30 @@
             const handleVolunteerScan = (qrData) => {
                 setScanningFor(null);
                 if (qrData.startsWith("PATIENT|")) {
-                    const id = qrData.split("|")[1];
-                    const patient = patients.find(p => p.id === id);
-                    if (patient) {
-                        setScannedPatient(patient);
-                    } else {
-                        showMsg("Patient ID not found in system.", 'error');
+                    const parts = qrData.split("|");
+                    const id = parts[1];
+                    let patient = patients.find(p => p.id === id);
+                    
+                    // FIX: Reconstruct patient if scanned from a different device
+                    if (!patient) {
+                        patient = {
+                            id: parts[1],
+                            name: parts[2],
+                            age: parts[3],
+                            gender: parts[4],
+                            symptoms: parts.slice(5).join("|"), // Get rest of string in case symptoms contain |
+                            status: "Awaiting Volunteer",
+                            timestamp: Date.now(),
+                            assignedDoctor: null,
+                            prescription: null,
+                            billAmount: null
+                        };
+                        // Add this new external patient to our local state so we can assign a doctor
+                        setPatients(prev => [...prev, patient]);
                     }
+                    
+                    setScannedPatient(patient);
+                    showMsg("Patient QR Scanned Successfully.", 'success');
                 } else {
                     showMsg("Invalid QR Format. Expected Patient QR.", 'error');
                 }
@@ -312,7 +329,7 @@
 
             const assignDoctor = (doctorId) => {
                 if(!scannedPatient) return;
-                setPatients(patients.map(p => 
+                setPatients(prevPatients => prevPatients.map(p => 
                     p.id === scannedPatient.id ? { ...p, status: 'In Queue', assignedDoctor: doctorId } : p
                 ));
                 setScannedPatient(null);
@@ -324,7 +341,7 @@
                     showMsg("Please enter a prescription before ending the session.", 'error');
                     return;
                 }
-                setPatients(patients.map(p => 
+                setPatients(prevPatients => prevPatients.map(p => 
                     p.id === patientId ? { ...p, status: 'Prescribed', prescription: prescriptionText } : p
                 ));
                 showMsg("Session Ended. Prescription QR generated.", 'success');
@@ -335,12 +352,26 @@
             const handlePharmacyScan = (qrData) => {
                 setScanningFor(null);
                 if (qrData.startsWith("RX|")) {
-                    const id = qrData.split("|")[1];
-                    const patient = patients.find(p => p.id === id);
-                    if (patient && patient.status === 'Prescribed') {
+                    const parts = qrData.split("|");
+                    const id = parts[1];
+                    let patient = patients.find(p => p.id === id);
+                    
+                    // FIX: Reconstruct patient if Rx scanned from a different device
+                    if (!patient) {
+                        patient = {
+                            id: parts[1],
+                            name: parts[2],
+                            prescription: parts.slice(3).join("|"), 
+                            status: 'Prescribed'
+                        };
+                        setPatients(prev => [...prev, patient]);
                         setBillingPatient(patient);
+                        showMsg("Rx QR Scanned Successfully.", 'success');
+                    } else if (patient && patient.status === 'Prescribed') {
+                        setBillingPatient(patient);
+                        showMsg("Rx QR Scanned Successfully.", 'success');
                     } else {
-                        showMsg("Patient not found or already billed.", 'error');
+                        showMsg("Patient already billed or status invalid.", 'error');
                     }
                 } else {
                     showMsg("Invalid QR Format. Expected Rx QR.", 'error');
@@ -350,13 +381,12 @@
             const collectPayment = (e) => {
                 e.preventDefault();
                 const amount = e.target.amount.value;
-                setPatients(patients.map(p => 
+                setPatients(prevPatients => prevPatients.map(p => 
                     p.id === billingPatient.id ? { ...p, status: 'Completed', billAmount: amount } : p
                 ));
                 setBillingPatient(null);
                 showMsg(`Payment of ₹${amount} collected. Medications dispensed.`, 'success');
             };
-
 
             return (
                 <div className="flex flex-col min-h-screen relative">
@@ -411,7 +441,6 @@
                         </div>
                     </nav>
 
-                    {}
                     <main className="flex-grow container mx-auto px-4 py-8 flex flex-col items-center justify-center relative">
                         
                         {/* VIEW: HOME */}
@@ -460,7 +489,6 @@
                             </div>
                         )}
 
-                        {}
                         {/* VIEW: PATIENT REGISTRATION */}
                         {view === 'register-patient' && (
                             <div className="w-full max-w-xl bg-white dark:bg-slate-800 p-8 rounded-3xl shadow-xl border border-slate-100 dark:border-slate-700 animate-fade-in">
@@ -547,7 +575,6 @@
                             </div>
                         )}
 
-                        {}
                         {/* VIEW: ADMIN DASHBOARD */}
                         {view === 'admin-dashboard' && currentUser?.role === 'Admin' && (
                             <div className="w-full max-w-5xl animate-fade-in space-y-6">
@@ -659,7 +686,6 @@
                             </div>
                         )}
 
-                        {}
                         {/* VIEW: DOCTOR DASHBOARD */}
                         {view === 'doctor-dashboard' && currentUser?.role === 'Doctor' && (
                             <div className="w-full max-w-4xl animate-fade-in space-y-6">
@@ -804,7 +830,6 @@
 
                     </main>
                     
-                    {}
                     <footer className="text-center py-6 text-sm font-medium text-slate-400">
                         &copy; 2026 CareNet NGO Medical Camp Management System.
                     </footer>
